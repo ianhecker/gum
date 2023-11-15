@@ -17,8 +17,7 @@ echo "Let's sign data onto a blockchain :package:" \
 echo "Please write your data below (CTRL+D to finish)"
 RAW_DATA=$(gum write --placeholder "Write here...")
 
-# DATA=$(echo $RAW_DATA | sed -E ':a;N;$!ba;s/\r{0,1}\n/\\n/g')
-DATA="my data here"
+DATA=$(echo $RAW_DATA | sed -E ':a;N;$!ba;s/\r{0,1}\n/\\n/g')
 
 echo "Let's sign your data, $USER!" && sleep $SLEEP_INTERVAL
 
