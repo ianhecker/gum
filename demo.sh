@@ -1,73 +1,79 @@
-#!/bin/sh
+#!/bin/bash
 
-ENDPOINT="localhost:8080"
-SLEEP_INTERVAL=0.5
+set -e
 
-USER=$(gum input \
-	--prompt "Hello! My name is Zipperchain. What's yours? " \
-	--prompt.foreground "#FF69B4" \
-	--placeholder "My name is...")
+URL="http://localhost:8080"
 
-echo "Welcome!\nIt's nice to meet you, $USER! :smile:" \
-	| gum format -t emoji && sleep $SLEEP_INTERVAL
+gum style --foreground "#F0F" -- "What's your name?"
+SIGNER=$(gum input --prompt "* " --placeholder "My name is...")
 
-echo "Let's sign data onto a blockchain :package:" \
-	| gum format -t emoji && sleep $SLEEP_INTERVAL
-
-echo "Please write your data below (CTRL+D to finish)"
+gum style --foreground "#F0F" -- "Write your data below (CTRL+D to finish)"
 RAW_DATA=$(gum write --placeholder "Write here...")
-
 DATA=$(echo $RAW_DATA | sed -E ':a;N;$!ba;s/\r{0,1}\n/\\n/g')
 
-echo "Let's sign your data, $USER!" && sleep $SLEEP_INTERVAL
+sign() {
+	http --quiet POST $URL/receipt Host:bky.sh signer_id="$SIGNER" data="$DATA"
+}
 
-if http \
-	--quiet \
-	POST http://$ENDPOINT/receipt Host:bky.sh \
-	signer_id="$USER" data="$DATA"
+processingStatus() {
+	http GET $URL/processingStatus Host:bky.sh signer_id=="$SIGNER" data=="$DATA"
+}
+
+getReceipts() {
+	http GET $URL/receipt Host:bky.sh signer_id=="$SIGNER" data=="$DATA"
+}
+
+getCertificate() {
+	echo "$@" | http POST $URL/certificate Host:bky.sh
+}
+
+if ! sign
 then
-    echo 'Success! Signed your data!'
-else
-    echo "Oops! Encountered an error"
+    printf "Oops, Encountered an error\n"
     exit 1
 fi
 
-echo "Let's fetch your receipt(s), $USER!"
-sleep $SLEEP_INTERVAL
+printf "Success! Signed your data:'$DATA'\n"
 
-RECEIPTS=$(http GET http://$ENDPOINT/receipt Host:bky.sh signer_id=="$USER" data=="$DATA")
-
-while [ "${RECEIPTS}" = "null" ] && gum confirm "Retry fetching receipt(s)?"
+STATUS=$(processingStatus)
+while [ ! -z "${STATUS}" ]
 do
-	echo "Fetching receipt(s) again..."
-	RECEIPTS=$(http GET http://$ENDPOINT/receipt Host:bky.sh signer_id=="$USER" data=="$DATA")
+	sleep 1
+	echo "Checking status..."
+	STATUS=$(processingStatus)
 done
 
-if [ "${RECEIPTS}" = "null" ]
-then
-	echo "Oops, looks like we weren't able to fetch your receipts"
-	exit 1
-fi
+printf "Fetching your receipt(s)\n"
 
-echo "Here are your receipts..."
-sleep $SLEEP_INTERVAL
-echo "$RECEIPTS" | jq > receipts.json && gum pager < receipts.json
+RECEIPTS=$(getReceipts)
+while [ "${RECEIPTS}" = "null" ]
+do
+	sleep 1
+	printf "Fetching receipt(s) again...\n"
+	RECEIPTS=$(getReceipts)
+done
+
+echo $RECEIPTS | jq
 
 INDEX=0
-RECEIPT_COUNT=$(jq length receipts.json)
+RECEIPT_COUNT=$(echo $RECEIPTS | jq length)
 if [ "${RECEIPT_COUNT}" -gt 1 ]
 then
-	echo "It looks like you have signed this data more than once, so"
-	echo "you have more than one receipt available!"
+	printf "You have $RECEIPT_COUNT receipts available\n"
+	gum style --foreground "#F0F" -- "Select a receipt index"
 
-	echo "Choose a receipt to verify with (by index)"
-	INDEX=$(seq 0 $(($RECEIPT_COUNT - 1)) | gum choose --limit 1)
+	INDEX=$(seq 0 $(($RECEIPT_COUNT - 1)) | gum choose --limit 1 --cursor.foreground "#F0F")
+
+	echo "Selected index:$INDEX"
 fi
 
-RECEIPT=$(jq --argjson index $((INDEX)) '.[$index]' receipts.json)
+RECEIPT=$(echo "$RECEIPTS" | jq --argjson index $((INDEX)) '.[$index]')
 
-CERTIFICATE=$(echo $RECEIPT | http POST "http://localhost:8080/certificate" Host:bky.sh)
+CERTIFICATE=$(getCertificate $RECEIPT)
+if [ -z "${CERTIFICATE}" ]
+then
+	printf "Oops, encountered an error\n"
+fi
 
-echo "Here is your certificate!"
-sleep $SLEEP_INTERVAL
-echo $CERTIFICATE | jq
+printf "Your certificate:\n"
+echo "$CERTIFICATE" | jq
